@@ -1,0 +1,295 @@
+将 渐变导入 为 gr
+
+导入 argparse
+导入 操作系统
+导入 副本
+
+将 numpy导入 为 np
+进口 手电筒
+从 PIL 导入 图像，ImageDraw，ImageFont
+
+# 接地恐龙
+导入 GroundingDINO。接地恐龙。数据集。转换 为 T
+来自 GroundingDINO。接地恐龙。模型 导入 build_model
+来自 GroundingDINO。接地恐龙。util 导入 box_ops
+来自 GroundingDINO。接地恐龙。效用。slconfig 导入 SLConfig
+来自 GroundingDINO。接地恐龙。效用。实用程序 导入 clean_state_dict , get_phrases_from_posmap
+
+# 分割任何东西
+from  segment_anything  import  build_sam , SamPredictor 
+导入 cv2
+将 numpy导入 为 np
+导入 matplotlib。pyplot 为 plt
+
+
+#扩散器
+进口 太平船
+导入 请求
+进口 手电筒
+从 io 导入 BytesIO
+从 扩散器 导入 StableDiffusionInpaintPipeline
+从 huggingface_hub 导入 hf_hub_download
+
+def  load_model_hf ( model_config_path , repo_id , filename , device = 'cpu' ):
+    参数 =  SLConfig。来自文件（模型配置路径）
+    模型 = 构建模型（参数）
+    参数。设备 = 设备
+
+    cache_file  =  hf_hub_download ( repo_id = repo_id ,文件名=文件名)
+    检查点 = 火炬。加载（缓存文件，地图位置= 'cpu'）
+    日志 = 模型。load_state_dict ( clean_state_dict ( checkpoint [ 'model' ]), strict = False )
+    打印（“从 {} \n => {} 加载模型”。格式（缓存文件，日志））
+    _  = 模型。评估（）
+    返回 模型    
+
+def  plot_boxes_to_image ( image_pil , tgt ):
+    H，W  =  tgt [ “尺寸” ]
+    盒子 =  tgt [ “盒子” ]
+    标签 =  tgt [ “标签” ]
+    断言 len ( boxes ) ==  len ( labels ), "boxes 和 labels 必须有相同的长度"
+
+    绘制 =  ImageDraw。绘制( image_pil )
+    面具 = 图像。新的（“L”，image_pil。大小，0）
+    mask_draw  =  ImageDraw。绘制（遮罩）
+
+    # 绘制方框和遮罩
+    对于 盒子，zip中的标签 （盒子，标签）： 
+        # 从 0..1 到 0..W, 0..H
+        盒子 = 盒子 * 手电筒。张量([ W , H , W , H ])
+        # 从 xywh 到 xyxy
+        框[: 2 ] -= 框[ 2 :] /  2
+        盒子[ 2 :] += 盒子[: 2 ]
+        # 随机颜色
+        color  =  tuple ( np . random . randint ( 0 , 255 , size = 3 ) .tolist ())
+        ＃ 画
+        x0 , y0 , x1 , y1  = 方框
+        x0 , y0 , x1 , y1  = 整数( x0 ),整数( y0 ),整数( x1 ),整数( y1 )
+
+        画。矩形（[ x0 , y0 , x1 , y1 ], outline = color , width = 6）
+        # draw.text((x0, y0), str(标签), 填充=颜色)
+
+        字体 = 图片字体。加载默认值（）
+        如果 hasattr（字体，“getbbox”）：
+            bbox  = 绘制。textbbox (( x0 , y0 ), str (标签),字体)
+        其他：
+            w , h  = 平局。文本大小（海峡（标签），字体）
+            bbox  = ( x0 , y0 , w  +  x0 , y0  +  h )
+        # bbox = draw.textbbox((x0, y0), str(label))
+        画。矩形( bbox , fill = color )
+        画。文本(( x0 , y0 ), str (标签), fill = "white" )
+
+        掩码绘制。矩形（[ x0 , y0 , x1 , y1 ], fill = 255 , width = 6）
+
+    返回 image_pil，蒙版
+
+def  load_image ( image_path ):
+    # #加载图片
+    # image_pil = Image.open(image_path).convert("RGB") # 加载图像
+    image_pil  = 图像路径
+
+    变换 =  T。 _ 撰写(
+        [
+            吨。RandomResize ([ 800 ], max_size = 1333 ),
+            吨。ToTensor (),
+            吨。规范化([ 0.485 , 0.456 , 0.406 ], [ 0.229 , 0.224 , 0.225 ]),
+        ]
+    )
+    图像，_  = 变换（image_pil，无）   #3，h，w
+    返回 image_pil，图像
+
+
+def  load_model（model_config_path，model_checkpoint_path，设备）：
+    参数 =  SLConfig。来自文件（模型配置路径）
+    参数。设备 = 设备
+    模型 = 构建模型（参数）
+    检查点 = 火炬。加载（model_checkpoint_path，map_location = “cpu”）
+    load_res  = 模型。load_state_dict ( clean_state_dict (检查点[ "模型" ]), strict = False )
+    打印( load_res )
+    _  = 模型。评估（）
+    返回 模型
+
+
+def  get_grounding_output（模型，图像，标题，box_threshold，text_threshold，with_logits = True，device = “cpu”）：
+    标题 = 标题。降低()
+    标题 = 标题。带状()
+    如果 不是 标题。以（“。” ）结尾：
+        标题 = 标题 +  “。”
+    模型 = 模型。到（设备）
+    图片 = 图片。到（设备）
+    用 手电筒。no_grad（）：
+        输出 = 模型（图像[无]，标题= [标题]）
+    logits  = 输出[ “pred_logits” ]。中央处理器（）。sigmoid ()[ 0 ]   # (nq, 256)
+    boxes  =  outputs [ “pred_boxes” ]。CPU ()[ 0 ]   #(nq, 4)
+    登录。形状[ 0 ]
+
+    # 过滤输出
+    logits_filt  =  logits。克隆()
+    boxes_filt  = 盒子。克隆()
+    filt_mask  =  logits_filt。最大（暗淡= 1）[ 0 ] >  box_threshold
+    logits_filt  =  logits_filt [ filt_mask ]   # num_filt, 256
+    boxes_filt  =  boxes_filt [ filt_mask ]   # num_filt, 4
+    logits_filt。形状[ 0 ]
+
+    # 获取短语
+    tokenlizer  = 模型。分词器
+    tokenized  =  tokenlizer（标题）
+    # 构建预测
+    pred_phrases  = []
+    对于 logit，zip中的框 （logits_filt，boxes_filt）： 
+        pred_phrase  =  get_phrases_from_posmap ( logit  >  text_threshold , tokenized , tokenlizer )
+        如果 with_logits：
+            pred_phrases。append ( pred_phrase  +  f"( { str ( logit . max (). item ())[: 4 ] } )" )
+        其他：
+            pred_phrases。追加( pred_phrase )
+
+    返回 boxes_filt，pred_phrases
+
+def  show_mask ( mask , ax , random_color = False ):
+    如果是 随机颜色：
+        颜色 =  np。连接([ np . random . random ( 3 ), np . array ([ 0.6 ])], axis = 0 )
+    其他：
+        颜色 =  np。数组([ 30 / 255 , 144 / 255 , 255 / 255 , 0.6 ])
+    h , w  = 面具。形状[ - 2 :]
+    掩码图像 = 掩码。重塑( h , w , 1 ) * 颜色。重塑( 1 , 1 , - 1 )
+    斧头。imshow (掩码图像)
+
+
+def  show_box（盒子，斧头，标签）：
+    x0 , y0  = 方框[ 0 ],方框[ 1 ]
+    w , h  = 方框[ 2 ] - 方框[ 0 ],方框[ 3 ] - 方框[ 1 ]
+    斧头。add_patch ( plt . Rectangle (( x0 , y0 ), w , h , edgecolor = 'green' , facecolor = ( 0 , 0 , 0 , 0 ), lw = 2 ))
+    斧头。文本（x0、y0、标签）
+
+
+config_file  =  'GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py'
+ckpt_repo_id  =  "ShilongLiu/GroundingDINO"
+ckpt_filenmae  =  "groundingdino_swint_ogc.pth"
+sam_checkpoint = '/home/ecs-user/download/sam_vit_h_4b8939.pth' 
+output_dir = "输出"
+设备= “cuda”
+
+def  run_grounded_sam ( image_path , text_prompt , task_type , inpaint_prompt , box_threshold , text_threshold ):
+    assert  text_prompt , 'text_prompt is not found!'
+
+    # 制作目录
+    操作系统_ makedirs ( output_dir , exist_ok = True )
+    # 载入图片
+    image_pil , image  =  load_image ( image_path .convert ( " RGB" ))
+    # 加载模型
+    模型 =  load_model_hf ( config_file , ckpt_repo_id , ckpt_filenmae )
+
+    # 可视化原始图像
+    image_pil。保存（os.path.join（output_dir，“ raw_image.jpg ” ））_
+
+    # 运行接地恐龙模型
+    boxes_filt , pred_phrases  =  get_grounding_output (
+        模型，图像，text_prompt，box_threshold，text_threshold，device = device
+    )
+
+    大小 =  image_pil。尺寸
+
+    如果 task_type  ==  'seg' 或 task_type  ==  'inpainting'：
+        # 初始化 SAM
+        预测器 =  SamPredictor ( build_sam ( checkpoint = sam_checkpoint ))
+        图片 =  np。阵列（图像路径）
+        预测器。设置图像（图像）
+
+        H , W  = 尺寸[ 1 ],尺寸[ 0 ]
+        对于 范围内的i  ( boxes_filt . size ( 0 ))： 
+            boxes_filt [ i ] =  boxes_filt [ i ] * 火炬。张量([ W , H , W , H ])
+            boxes_filt [ i ][: 2 ] -=  boxes_filt [ i ] [ 2 :] /  2
+            boxes_filt [ i ] [ 2 :] +=  boxes_filt [ i ] [: 2 ]
+
+        boxes_filt  =  boxes_filt。处理器()
+        transformed_boxes  = 预测器。改造。apply_boxes_torch ( boxes_filt , image . shape [: 2 ])
+
+        masks , _ , _  = 预测器. 预测火炬（
+            point_coords  = 无，
+            point_labels  = 无，
+            盒子 = 变形盒子,
+            多掩码输出 = 假，
+        )
+
+        # 掩码：[1, 1, 512, 512]
+
+    如果 task_type  ==  'det'：
+        pred_dict  = {
+            “盒子”：boxes_filt，
+            “尺寸”：[尺寸[ 1 ]，尺寸[ 0 ]]，   #H，W
+            “标签”：pred_phrases，
+        }
+        # 导入 ipdb; ipdb.set_trace()
+        image_with_box  =  plot_boxes_to_image ( image_pil , pred_dict )[ 0 ]
+        图像路径 = 操作系统。路径。加入（output_dir，“grounding_dino_output.jpg”）
+        image_with_box。保存（图像路径）
+        image_result  =  cv2。cvtColor ( cv2 . imread ( image_path ), cv2 . COLOR_BGR2RGB )
+        返回 图像_结果
+    elif  task_type  ==  'seg' :
+        断言 sam_checkpoint，“未找到 sam_checkpoint！”
+
+        # 绘制输出图像
+        铂。图( figsize = ( 10 , 10 ))
+        铂。imshow（图像）
+         口罩 中的 口罩：
+            show_mask (掩码.cpu ( ). numpy ( ), plt.gca ( ), random_color = True )
+        对于 box，zip中的标签 （boxes_filt，pred_phrases）： 
+            show_box ( box . numpy (), plt . gca (), label )
+        铂。轴（'关闭'）
+        图像路径 = 操作系统。路径。加入（output_dir，“grounding_dino_output.jpg”）
+        铂。savefig ( image_path , bbox_inches = "tight" )
+        image_result  =  cv2。cvtColor ( cv2 . imread ( image_path ), cv2 . COLOR_BGR2RGB )
+        返回 图像_结果
+    elif  task_type  ==  '修复'：
+        断言 inpaint_prompt，“未找到 inpaint_prompt！”
+        # 修复管道
+        掩码 = 掩码[ 0 ] [ 0 ]。中央处理器（）。numpy () # 简单地选择第一个掩码，它将在未来的版本中优化
+        mask_pil  = 图片。fromarray（掩码）
+        image_pil  = 图片。来自数组（图像）
+        
+        pipe  =  StableDiffusionInpaintPipeline。来自_pretrained (
+        "runwayml/stable-diffusion-inpainting" , torch_dtype = torch。浮动16
+        )
+        管道 = 管道。到（“cuda”）
+
+        图像 = 管道（提示= inpaint_prompt，图像= image_pil，mask_image = mask_pil）。图片[ 0 ]
+        图像路径 = 操作系统。路径。加入（output_dir，“grounded_sam_inpainting_output.jpg”）
+        形象。保存（图像路径）
+        image_result  =  cv2。cvtColor ( cv2 . imread ( image_path ), cv2 . COLOR_BGR2RGB )
+        返回 图像_结果
+    其他：
+        打印（“任务类型：{}错误！”。格式（任务类型））
+
+如果 __name__  ==  "__main__"：
+
+    解析器 =  argparse。ArgumentParser ( "Grounded SAM demo" , add_help = True )
+    解析器。add_argument ( "--debug" , action = "store_true" , help = "使用调试模式" )
+    解析器。add_argument ( "--share" , action = "store_true" , help = "share the app" )
+    args  = 解析器。解析参数（）
+
+    块 = 克。积木()。排队（）
+    与 块：
+        与 克。行():
+            与 克。列（）：
+                输入图像 =  gr。图片（来源= '上传'，类型= “pil”）
+                text_prompt  =  gr。文本框（标签= “检测提示”）
+                任务类型 =  gr。文本框（标签= “任务类型：det/seg/inpainting”）
+                inpaint_prompt  =  gr。文本框（标签= “修复提示”）
+                run_button  =  gr。按钮（标签= “运行”）
+                与 克。手风琴（“高级选项”，open = False）：
+                    box_threshold  =  gr。滑块(
+                        label = "Box Threshold" , minimum = 0.0 , maximum = 1.0 , value = 0.3 , step = 0.001
+                    )
+                    文本阈值 =  gr。滑块(
+                        label = "Text Threshold" , minimum = 0.0 , maximum = 1.0 , value = 0.25 , step = 0.001
+                    )
+
+            与 克。列（）：
+                画廊 =  gr。输出。图片(
+                    类型= "pil" ,
+                ). 样式( full_width = True , full_height = True )
+
+        运行按钮。点击（fn = run_grounded_sam，输入= [
+                        input_image，text_prompt，task_type，inpaint_prompt，box_threshold，text_threshold ]，输出= [画廊]）
+
+
+    块。启动（server_name = ' 0.0.0.0 '，server_port = 7589，debug = args。debug，share = args。share）_ _
